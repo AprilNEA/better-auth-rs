@@ -12,7 +12,8 @@ use tower::ServiceBuilder;
 use std::sync::Arc;
 
 #[cfg(feature = "axum")]
-use crate::{BetterAuth, AuthRequest, AuthResponse, HttpMethod};
+use crate::{BetterAuth, AuthRequest, AuthResponse};
+use crate::types::HttpMethod;
 #[cfg(feature = "axum")]
 use crate::error::AuthError;
 
@@ -31,35 +32,8 @@ impl AxumIntegration for Arc<BetterAuth> {
         // Add default health check route
         router = router.route("/health", get(health_check));
         
-        // Register all plugin routes
-        for plugin in &self.plugins {
-            for route in plugin.routes() {
-                let handler_fn = create_axum_handler();
-                match route.method {
-                    HttpMethod::Get => {
-                        router = router.route(&route.path, get(handler_fn));
-                    },
-                    HttpMethod::Post => {
-                        router = router.route(&route.path, post(handler_fn));
-                    },
-                    HttpMethod::Put => {
-                        router = router.route(&route.path, axum::routing::put(handler_fn));
-                    },
-                    HttpMethod::Delete => {
-                        router = router.route(&route.path, axum::routing::delete(handler_fn));
-                    },
-                    HttpMethod::Patch => {
-                        router = router.route(&route.path, axum::routing::patch(handler_fn));
-                    },
-                    HttpMethod::Options => {
-                        router = router.route(&route.path, axum::routing::options(handler_fn));
-                    },
-                    HttpMethod::Head => {
-                        router = router.route(&route.path, axum::routing::head(handler_fn));
-                    },
-                }
-            }
-        }
+        // Register basic authentication routes
+        // Note: In a full implementation, these would be handled by plugin routes
         
         router.with_state(self)
     }

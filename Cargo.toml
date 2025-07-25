@@ -39,7 +39,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 # HTTP related (optional features)
 axum = { version = "0.7", optional = true }
 tower = { version = "0.4", optional = true }
-tower-http = { version = "0.5", optional = true }
+tower-http = { version = "0.5", features = ["cors", "fs"], optional = true }
 url = "2.4"
 
 # Database adapters (optional features)
@@ -56,6 +56,7 @@ redis-cache = ["dep:redis"]
 
 [dev-dependencies]
 tokio-test = "0.4"
+tracing-subscriber = "0.3"
 
 [[example]]
 name = "basic_usage"
@@ -65,3 +66,8 @@ path = "examples/basic_usage.rs"
 name = "postgres_usage"
 path = "examples/postgres_usage.rs"
 required-features = ["sqlx-postgres"]
+
+[[example]]
+name = "axum_server"
+path = "examples/axum_server.rs"
+required-features = ["axum"]

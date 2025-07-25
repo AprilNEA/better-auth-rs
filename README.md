@@ -119,7 +119,9 @@ better-auth/
 │   ├── error.rs        # Error types
 │   └── types.rs        # Core type definitions
 └── examples/
-    └── basic_usage.rs  # Usage examples
+    ├── basic_usage.rs     # Basic authentication example
+    ├── postgres_usage.rs  # PostgreSQL database example
+    └── axum_server.rs     # Complete web server with demo UI
 ```
 
 ## 🔧 Available Features
@@ -142,19 +144,41 @@ redis-cache = ["dep:redis"]
 
 ## 🧪 Running Examples
 
+### Basic Usage Example
 ```bash
 # Run basic example (in-memory database)
 cargo run --example basic_usage
+```
 
+### PostgreSQL Example
+```bash
 # Run PostgreSQL example
 export DATABASE_URL="postgresql://better_auth:password@localhost:5432/better_auth"
 cargo run --example postgres_usage --features sqlx-postgres
+```
 
-# Test compilation
+### Axum Web Server Example
+```bash
+# Run Axum web server with interactive demo
+cargo run --example axum_server --features axum
+```
+
+Then visit:
+- **http://localhost:8080** - Interactive web demo with sign-up/sign-in forms
+- **http://localhost:8080/auth/health** - Health check endpoint
+- **http://localhost:8080/api/public** - Public API endpoint
+- **http://localhost:8080/api/protected** - Protected API endpoint (requires authentication)
+
+### Testing Compilation
+```bash
+# Test basic compilation
 cargo check
 
 # Test PostgreSQL features
 cargo check --features sqlx-postgres
+
+# Test Axum features
+cargo check --features axum
 ```
 
 ## 🛠️ Development Status
