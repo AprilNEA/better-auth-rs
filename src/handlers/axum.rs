@@ -32,8 +32,30 @@ impl AxumIntegration for Arc<BetterAuth> {
         // Add default health check route
         router = router.route("/health", get(health_check));
         
-        // Register basic authentication routes
-        // Note: In a full implementation, these would be handled by plugin routes
+        // Register plugin routes
+        for plugin in self.plugins() {
+            for route in plugin.routes() {
+                let handler_fn = create_plugin_handler();
+                match route.method {
+                    crate::types::HttpMethod::Get => {
+                        router = router.route(&route.path, get(handler_fn.clone()));
+                    },
+                    crate::types::HttpMethod::Post => {
+                        router = router.route(&route.path, post(handler_fn.clone()));
+                    },
+                    crate::types::HttpMethod::Put => {
+                        router = router.route(&route.path, axum::routing::put(handler_fn.clone()));
+                    },
+                    crate::types::HttpMethod::Delete => {
+                        router = router.route(&route.path, axum::routing::delete(handler_fn.clone()));
+                    },
+                    crate::types::HttpMethod::Patch => {
+                        router = router.route(&route.path, axum::routing::patch(handler_fn.clone()));
+                    },
+                    _ => {} // Skip unsupported methods
+                }
+            }
+        }
         
         router.with_state(self)
     }
@@ -48,12 +70,18 @@ async fn health_check() -> impl IntoResponse {
 }
 
 #[cfg(feature = "axum")]
-fn create_axum_handler() -> impl Fn(State<Arc<BetterAuth>>, Request) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response, AuthError>> + Send>> + Clone {
+fn create_plugin_handler() -> impl Fn(State<Arc<BetterAuth>>, Request) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>> + Clone {
     |State(auth): State<Arc<BetterAuth>>, req: Request| {
         Box::pin(async move {
-            let auth_req = convert_axum_request(req).await?;
-            let auth_response = auth.handle_request(auth_req).await?;
-            Ok(convert_auth_response(auth_response))
+            match convert_axum_request(req).await {
+                Ok(auth_req) => {
+                    match auth.handle_request(auth_req).await {
+                        Ok(auth_response) => convert_auth_response(auth_response),
+                        Err(err) => err.into_response(),
+                    }
+                },
+                Err(err) => err.into_response(),
+            }
         })
     }
 }

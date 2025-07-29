@@ -5,45 +5,130 @@ use std::collections::HashMap;
 
 
 
-/// Core user type
+/// Core user type - matches OpenAPI schema
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct User {
     pub id: String,
-    pub email: Option<String>,
     pub name: Option<String>,
-    pub image: Option<String>,
+    pub email: Option<String>,
+    #[serde(rename = "emailVerified")]
     pub email_verified: bool,
+    pub image: Option<String>,
+    #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
+    #[serde(rename = "updatedAt")]
     pub updated_at: DateTime<Utc>,
+    pub username: Option<String>,
+    #[serde(rename = "displayUsername")]
+    pub display_username: Option<String>,
+    #[serde(rename = "twoFactorEnabled")]
+    pub two_factor_enabled: bool,
+    pub role: Option<String>,
+    pub banned: bool,
+    #[serde(rename = "banReason")]
+    pub ban_reason: Option<String>,
+    #[serde(rename = "banExpires")]
+    pub ban_expires: Option<DateTime<Utc>>,
+    // Keep metadata for internal use but don't serialize
+    #[serde(skip)]
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// Session information
+/// Session information - matches OpenAPI schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
-    pub user_id: String,
-    pub token: String,
+    #[serde(rename = "expiresAt")]
     pub expires_at: DateTime<Utc>,
+    pub token: String,
+    #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: DateTime<Utc>,
+    #[serde(rename = "ipAddress")]
     pub ip_address: Option<String>,
+    #[serde(rename = "userAgent")]  
     pub user_agent: Option<String>,
+    #[serde(rename = "userId")]
+    pub user_id: String,
+    #[serde(rename = "impersonatedBy")]
+    pub impersonated_by: Option<String>,
+    #[serde(rename = "activeOrganizationId")]
+    pub active_organization_id: Option<String>,
+    // Keep active field for internal use but don't serialize
+    #[serde(skip)]
     pub active: bool,
 }
 
-/// Account linking (for OAuth providers)
+/// Account linking (for OAuth providers) - matches OpenAPI schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: String,
+    #[serde(rename = "accountId")]
+    pub account_id: String,
+    #[serde(rename = "providerId")]
+    pub provider_id: String,
+    #[serde(rename = "userId")]
     pub user_id: String,
-    pub provider: String,
-    pub provider_account_id: String,
+    #[serde(rename = "accessToken")]
     pub access_token: Option<String>,
+    #[serde(rename = "refreshToken")]
     pub refresh_token: Option<String>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub token_type: Option<String>,
+    #[serde(rename = "idToken")]
+    pub id_token: Option<String>,
+    #[serde(rename = "accessTokenExpiresAt")]
+    pub access_token_expires_at: Option<DateTime<Utc>>,
+    #[serde(rename = "refreshTokenExpiresAt")] 
+    pub refresh_token_expires_at: Option<DateTime<Utc>>,
     pub scope: Option<String>,
+    pub password: Option<String>,
+    #[serde(rename = "createdAt")]
     pub created_at: DateTime<Utc>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Verification token - matches OpenAPI schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Verification {
+    pub id: String,
+    pub identifier: String,
+    pub value: String,
+    #[serde(rename = "expiresAt")]
+    pub expires_at: DateTime<Utc>,
+    #[serde(rename = "createdAt")]
+    pub created_at: DateTime<Utc>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Two-factor authentication - matches OpenAPI schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TwoFactor {
+    pub id: String,
+    pub secret: String,
+    #[serde(rename = "backupCodes")]
+    pub backup_codes: Option<String>,
+    #[serde(rename = "userId")]
+    pub user_id: String,
+}
+
+/// Passkey authentication - matches OpenAPI schema
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Passkey {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
+    #[serde(rename = "userId")]
+    pub user_id: String,
+    #[serde(rename = "credentialID")]
+    pub credential_id: String,
+    pub counter: u64,
+    #[serde(rename = "deviceType")]
+    pub device_type: String,
+    #[serde(rename = "backedUp")]
+    pub backed_up: bool,
 }
 
 /// HTTP method enumeration
@@ -83,7 +168,11 @@ pub struct CreateUser {
     pub email: Option<String>,
     pub name: Option<String>,
     pub image: Option<String>,
+    pub email_verified: Option<bool>,
     pub password: Option<String>,
+    pub username: Option<String>,
+    pub display_username: Option<String>,
+    pub role: Option<String>,
     pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -94,6 +183,13 @@ pub struct UpdateUser {
     pub name: Option<String>,
     pub image: Option<String>,
     pub email_verified: Option<bool>,
+    pub username: Option<String>,
+    pub display_username: Option<String>,
+    pub role: Option<String>,
+    pub banned: Option<bool>,
+    pub ban_reason: Option<String>,
+    pub ban_expires: Option<DateTime<Utc>>,
+    pub two_factor_enabled: Option<bool>,
     pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
@@ -104,19 +200,31 @@ pub struct CreateSession {
     pub expires_at: DateTime<Utc>,
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
+    pub impersonated_by: Option<String>,
+    pub active_organization_id: Option<String>,
 }
 
 /// Account creation data
 #[derive(Debug, Clone)]
 pub struct CreateAccount {
     pub user_id: String,
-    pub provider: String,
-    pub provider_account_id: String,
+    pub account_id: String,
+    pub provider_id: String,
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub token_type: Option<String>,
+    pub id_token: Option<String>,
+    pub access_token_expires_at: Option<DateTime<Utc>>,
+    pub refresh_token_expires_at: Option<DateTime<Utc>>,
     pub scope: Option<String>,
+    pub password: Option<String>,
+}
+
+/// Verification token creation data
+#[derive(Debug, Clone)]
+pub struct CreateVerification {
+    pub identifier: String,
+    pub value: String,
+    pub expires_at: DateTime<Utc>,
 }
 
 impl CreateUser {
@@ -126,7 +234,11 @@ impl CreateUser {
             email: None,
             name: None,
             image: None,
+            email_verified: None,
             password: None,
+            username: None,
+            display_username: None,
+            role: None,
             metadata: None,
         }
     }
@@ -141,8 +253,23 @@ impl CreateUser {
         self
     }
     
+    pub fn with_email_verified(mut self, verified: bool) -> Self {
+        self.email_verified = Some(verified);
+        self
+    }
+    
     pub fn with_password(mut self, password: impl Into<String>) -> Self {
         self.password = Some(password.into());
+        self
+    }
+    
+    pub fn with_username(mut self, username: impl Into<String>) -> Self {
+        self.username = Some(username.into());
+        self
+    }
+    
+    pub fn with_role(mut self, role: impl Into<String>) -> Self {
+        self.role = Some(role.into());
         self
     }
 }
@@ -235,12 +362,19 @@ mod postgres_impls {
         fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
             Ok(Self {
                 id: row.try_get("id")?,
-                email: row.try_get("email")?,
                 name: row.try_get("name")?,
-                image: row.try_get("image")?,
+                email: row.try_get("email")?,
                 email_verified: row.try_get("email_verified")?,
+                image: row.try_get("image")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                username: row.try_get("username")?,
+                display_username: row.try_get("display_username")?,
+                two_factor_enabled: row.try_get("two_factor_enabled").unwrap_or(false),
+                role: row.try_get("role")?,
+                banned: row.try_get("banned").unwrap_or(false),
+                ban_reason: row.try_get("ban_reason")?,
+                ban_expires: row.try_get("ban_expires")?,
                 metadata: {
                     let json_value: sqlx::types::Json<HashMap<String, serde_json::Value>> = 
                         row.try_get("metadata")?;
@@ -254,13 +388,16 @@ mod postgres_impls {
         fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
             Ok(Self {
                 id: row.try_get("id")?,
-                user_id: row.try_get("user_id")?,
-                token: row.try_get("token")?,
                 expires_at: row.try_get("expires_at")?,
+                token: row.try_get("token")?,
                 created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
                 ip_address: row.try_get("ip_address")?,
                 user_agent: row.try_get("user_agent")?,
-                active: row.try_get("active")?,
+                user_id: row.try_get("user_id")?,
+                impersonated_by: row.try_get("impersonated_by")?,
+                active_organization_id: row.try_get("active_organization_id")?,
+                active: row.try_get("active").unwrap_or(true),
             })
         }
     }
@@ -269,15 +406,18 @@ mod postgres_impls {
         fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
             Ok(Self {
                 id: row.try_get("id")?,
+                account_id: row.try_get("account_id")?,
+                provider_id: row.try_get("provider_id")?,
                 user_id: row.try_get("user_id")?,
-                provider: row.try_get("provider")?,
-                provider_account_id: row.try_get("provider_account_id")?,
                 access_token: row.try_get("access_token")?,
                 refresh_token: row.try_get("refresh_token")?,
-                expires_at: row.try_get("expires_at")?,
-                token_type: row.try_get("token_type")?,
+                id_token: row.try_get("id_token")?,
+                access_token_expires_at: row.try_get("access_token_expires_at")?,
+                refresh_token_expires_at: row.try_get("refresh_token_expires_at")?,
                 scope: row.try_get("scope")?,
+                password: row.try_get("password")?,
                 created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
             })
         }
     }

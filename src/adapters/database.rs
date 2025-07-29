@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::types::{User, Session, Account, CreateUser, UpdateUser, CreateSession, CreateAccount};
+use crate::types::{User, Session, Account, Verification, CreateUser, UpdateUser, CreateSession, CreateAccount, CreateVerification};
 use crate::error::{AuthResult, AuthError};
 
 /// Database adapter trait for persistence
@@ -20,6 +20,7 @@ pub trait DatabaseAdapter: Send + Sync {
     // Session operations
     async fn create_session(&self, session: CreateSession) -> AuthResult<Session>;
     async fn get_session(&self, token: &str) -> AuthResult<Option<Session>>;
+    async fn get_user_sessions(&self, user_id: &str) -> AuthResult<Vec<Session>>;
     async fn update_session_expiry(&self, token: &str, expires_at: DateTime<Utc>) -> AuthResult<()>;
     async fn delete_session(&self, token: &str) -> AuthResult<()>;
     async fn delete_user_sessions(&self, user_id: &str) -> AuthResult<()>;
@@ -30,6 +31,13 @@ pub trait DatabaseAdapter: Send + Sync {
     async fn get_account(&self, provider: &str, provider_account_id: &str) -> AuthResult<Option<Account>>;
     async fn get_user_accounts(&self, user_id: &str) -> AuthResult<Vec<Account>>;
     async fn delete_account(&self, id: &str) -> AuthResult<()>;
+    
+    // Verification token operations
+    async fn create_verification(&self, verification: CreateVerification) -> AuthResult<Verification>;
+    async fn get_verification(&self, identifier: &str, value: &str) -> AuthResult<Option<Verification>>;
+    async fn get_verification_by_value(&self, value: &str) -> AuthResult<Option<Verification>>;
+    async fn delete_verification(&self, id: &str) -> AuthResult<()>;
+    async fn delete_expired_verifications(&self) -> AuthResult<usize>;
 }
 
 /// In-memory database adapter for testing and development
@@ -37,6 +45,7 @@ pub struct MemoryDatabaseAdapter {
     users: Arc<Mutex<HashMap<String, User>>>,
     sessions: Arc<Mutex<HashMap<String, Session>>>,
     accounts: Arc<Mutex<HashMap<String, Account>>>,
+    verifications: Arc<Mutex<HashMap<String, Verification>>>,
     email_index: Arc<Mutex<HashMap<String, String>>>, // email -> user_id
 }
 
@@ -46,6 +55,7 @@ impl MemoryDatabaseAdapter {
             users: Arc::new(Mutex::new(HashMap::new())),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             accounts: Arc::new(Mutex::new(HashMap::new())),
+            verifications: Arc::new(Mutex::new(HashMap::new())),
             email_index: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -75,12 +85,19 @@ impl DatabaseAdapter for MemoryDatabaseAdapter {
         let now = Utc::now();
         let user = User {
             id: id.clone(),
-            email: create_user.email.clone(),
             name: create_user.name,
+            email: create_user.email.clone(),
+            email_verified: create_user.email_verified.unwrap_or(false),
             image: create_user.image,
-            email_verified: false,
             created_at: now,
             updated_at: now,
+            username: create_user.username,
+            display_username: create_user.display_username,
+            two_factor_enabled: false,
+            role: create_user.role,
+            banned: false,
+            ban_reason: None,
+            ban_expires: None,
             metadata: create_user.metadata.unwrap_or_default(),
         };
         
@@ -162,14 +179,18 @@ impl DatabaseAdapter for MemoryDatabaseAdapter {
         let mut sessions = self.sessions.lock().unwrap();
         
         let token = format!("session_{}", Uuid::new_v4());
+        let now = Utc::now();
         let session = Session {
             id: Uuid::new_v4().to_string(),
-            user_id: create_session.user_id,
-            token: token.clone(),
             expires_at: create_session.expires_at,
-            created_at: Utc::now(),
+            token: token.clone(),
+            created_at: now,
+            updated_at: now,
             ip_address: create_session.ip_address,
             user_agent: create_session.user_agent,
+            user_id: create_session.user_id,
+            impersonated_by: create_session.impersonated_by,
+            active_organization_id: create_session.active_organization_id,
             active: true,
         };
         
@@ -180,6 +201,14 @@ impl DatabaseAdapter for MemoryDatabaseAdapter {
     async fn get_session(&self, token: &str) -> AuthResult<Option<Session>> {
         let sessions = self.sessions.lock().unwrap();
         Ok(sessions.get(token).cloned())
+    }
+    
+    async fn get_user_sessions(&self, user_id: &str) -> AuthResult<Vec<Session>> {
+        let sessions = self.sessions.lock().unwrap();
+        Ok(sessions.values()
+            .filter(|session| session.user_id == user_id && session.active)
+            .cloned()
+            .collect())
     }
     
     async fn update_session_expiry(&self, token: &str, expires_at: DateTime<Utc>) -> AuthResult<()> {
@@ -215,17 +244,21 @@ impl DatabaseAdapter for MemoryDatabaseAdapter {
     async fn create_account(&self, create_account: CreateAccount) -> AuthResult<Account> {
         let mut accounts = self.accounts.lock().unwrap();
         
+        let now = Utc::now();
         let account = Account {
             id: Uuid::new_v4().to_string(),
+            account_id: create_account.account_id,
+            provider_id: create_account.provider_id,
             user_id: create_account.user_id,
-            provider: create_account.provider,
-            provider_account_id: create_account.provider_account_id,
             access_token: create_account.access_token,
             refresh_token: create_account.refresh_token,
-            expires_at: create_account.expires_at,
-            token_type: create_account.token_type,
+            id_token: create_account.id_token,
+            access_token_expires_at: create_account.access_token_expires_at,
+            refresh_token_expires_at: create_account.refresh_token_expires_at,
             scope: create_account.scope,
-            created_at: Utc::now(),
+            password: create_account.password,
+            created_at: now,
+            updated_at: now,
         };
         
         accounts.insert(account.id.clone(), account.clone());
@@ -235,7 +268,7 @@ impl DatabaseAdapter for MemoryDatabaseAdapter {
     async fn get_account(&self, provider: &str, provider_account_id: &str) -> AuthResult<Option<Account>> {
         let accounts = self.accounts.lock().unwrap();
         Ok(accounts.values()
-            .find(|acc| acc.provider == provider && acc.provider_account_id == provider_account_id)
+            .find(|acc| acc.provider_id == provider && acc.account_id == provider_account_id)
             .cloned())
     }
     
@@ -251,6 +284,57 @@ impl DatabaseAdapter for MemoryDatabaseAdapter {
         let mut accounts = self.accounts.lock().unwrap();
         accounts.remove(id);
         Ok(())
+    }
+    
+    async fn create_verification(&self, create_verification: CreateVerification) -> AuthResult<Verification> {
+        let mut verifications = self.verifications.lock().unwrap();
+        
+        let now = Utc::now();
+        let verification = Verification {
+            id: Uuid::new_v4().to_string(),
+            identifier: create_verification.identifier,
+            value: create_verification.value.clone(),
+            expires_at: create_verification.expires_at,
+            created_at: now,
+            updated_at: now,
+        };
+        
+        verifications.insert(verification.id.clone(), verification.clone());
+        Ok(verification)
+    }
+    
+    async fn get_verification(&self, identifier: &str, value: &str) -> AuthResult<Option<Verification>> {
+        let verifications = self.verifications.lock().unwrap();
+        let now = Utc::now();
+        
+        Ok(verifications.values()
+            .find(|v| v.identifier == identifier && v.value == value && v.expires_at > now)
+            .cloned())
+    }
+    
+    async fn get_verification_by_value(&self, value: &str) -> AuthResult<Option<Verification>> {
+        let verifications = self.verifications.lock().unwrap();
+        let now = Utc::now();
+        
+        Ok(verifications.values()
+            .find(|v| v.value == value && v.expires_at > now)
+            .cloned())
+    }
+    
+    async fn delete_verification(&self, id: &str) -> AuthResult<()> {
+        let mut verifications = self.verifications.lock().unwrap();
+        verifications.remove(id);
+        Ok(())
+    }
+    
+    async fn delete_expired_verifications(&self) -> AuthResult<usize> {
+        let mut verifications = self.verifications.lock().unwrap();
+        let now = Utc::now();
+        let initial_count = verifications.len();
+        
+        verifications.retain(|_, verification| verification.expires_at > now);
+        
+        Ok(initial_count - verifications.len())
     }
 }
 
@@ -542,20 +626,23 @@ pub mod sqlx_adapter {
             
             let account = sqlx::query_as::<_, Account>(
                 r#"
-                INSERT INTO accounts (id, user_id, provider, provider_account_id, access_token, refresh_token, expires_at, token_type, scope, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                RETURNING id, user_id, provider, provider_account_id, access_token, refresh_token, expires_at, token_type, scope, created_at
+                INSERT INTO accounts (id, account_id, provider_id, user_id, access_token, refresh_token, id_token, access_token_expires_at, refresh_token_expires_at, scope, password, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                RETURNING *
                 "#
             )
             .bind(&id)
+            .bind(&create_account.account_id)
+            .bind(&create_account.provider_id)
             .bind(&create_account.user_id)
-            .bind(&create_account.provider)
-            .bind(&create_account.provider_account_id)
             .bind(&create_account.access_token)
             .bind(&create_account.refresh_token)
-            .bind(&create_account.expires_at)
-            .bind(&create_account.token_type)
+            .bind(&create_account.id_token)
+            .bind(&create_account.access_token_expires_at)
+            .bind(&create_account.refresh_token_expires_at)
             .bind(&create_account.scope)
+            .bind(&create_account.password)
+            .bind(&now)
             .bind(&now)
             .fetch_one(&self.pool)
             .await?;
@@ -566,9 +653,9 @@ pub mod sqlx_adapter {
         async fn get_account(&self, provider: &str, provider_account_id: &str) -> AuthResult<Option<Account>> {
             let account = sqlx::query_as::<_, Account>(
                 r#"
-                SELECT id, user_id, provider, provider_account_id, access_token, refresh_token, expires_at, token_type, scope, created_at
+                SELECT *
                 FROM accounts 
-                WHERE provider = $1 AND provider_account_id = $2
+                WHERE provider_id = $1 AND account_id = $2
                 "#
             )
             .bind(provider)

@@ -29,6 +29,8 @@ impl SessionManager {
             expires_at,
             ip_address,
             user_agent,
+            impersonated_by: None,
+            active_organization_id: None,
         };
         
         let session = self.database.create_session(create_session).await?;

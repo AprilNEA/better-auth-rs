@@ -118,6 +118,11 @@ impl BetterAuth {
         routes
     }
     
+    /// Get all plugins (useful for Axum integration)
+    pub fn plugins(&self) -> &Vec<Box<dyn AuthPlugin>> {
+        &self.plugins
+    }
+    
     /// Get plugin by name
     pub fn get_plugin(&self, name: &str) -> Option<&dyn AuthPlugin> {
         self.plugins.iter()

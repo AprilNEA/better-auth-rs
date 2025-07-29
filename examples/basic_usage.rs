@@ -1,5 +1,5 @@
 use better_auth::{BetterAuth, AuthConfig};
-use better_auth::plugins::EmailPasswordPlugin;
+use better_auth::plugins::{EmailPasswordPlugin, PasswordManagementPlugin, EmailVerificationPlugin, SessionManagementPlugin};
 use better_auth::adapters::MemoryDatabaseAdapter;
 
 #[tokio::main]
@@ -20,6 +20,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auth = BetterAuth::new(config)
         .database(database)
         .plugin(EmailPasswordPlugin::new().enable_signup(true))
+        .plugin(PasswordManagementPlugin::new())
+        .plugin(EmailVerificationPlugin::new())
+        .plugin(SessionManagementPlugin::new())
         .build()
         .await?;
     

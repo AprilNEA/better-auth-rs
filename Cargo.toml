@@ -33,12 +33,13 @@ jsonwebtoken = "9.0"
 argon2 = "0.5"
 base64 = "0.22"
 
-# UUID
+# UUID and URL encoding
 uuid = { version = "1.0", features = ["v4", "serde"] }
+urlencoding = "2.1"
 
 # HTTP related (optional features)
-axum = { version = "0.7", optional = true }
-tower = { version = "0.4", optional = true }
+axum = { version = "0.7", optional = true, features = ["tokio"] }
+tower = { version = "0.4", features = ["util"], optional = true }
 tower-http = { version = "0.5", features = ["cors", "fs"], optional = true }
 url = "2.4"
 
@@ -57,6 +58,7 @@ redis-cache = ["dep:redis"]
 [dev-dependencies]
 tokio-test = "0.4"
 tracing-subscriber = "0.3"
+tower-test = "0.4"
 
 [[example]]
 name = "basic_usage"

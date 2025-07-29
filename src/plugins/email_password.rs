@@ -21,21 +21,35 @@ pub struct EmailPasswordConfig {
 
 #[derive(Debug, Deserialize)]
 struct SignUpRequest {
+    name: String,
     email: String,
     password: String,
-    name: Option<String>,
+    #[serde(rename = "callbackURL")]
+    callback_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct SignInRequest {
     email: String,
     password: String,
+    #[serde(rename = "callbackURL")]
+    callback_url: Option<String>,
+    #[serde(rename = "rememberMe")]
+    remember_me: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
-struct AuthSuccessResponse {
+struct SignUpResponse {
+    token: Option<String>,
     user: User,
-    session_token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SignInResponse {
+    redirect: bool,
+    token: String,
+    url: Option<String>,
+    user: User,
 }
 
 impl EmailPasswordPlugin {
@@ -72,11 +86,23 @@ impl EmailPasswordPlugin {
             }))?);
         }
         
-        let signup_req: SignUpRequest = req.body_as_json()
-            .map_err(|e| AuthError::InvalidRequest(format!("Invalid JSON: {}", e)))?;
+        let signup_req: SignUpRequest = match req.body_as_json() {
+            Ok(req) => req,
+            Err(e) => {
+                return Ok(AuthResponse::json(400, &serde_json::json!({
+                    "error": "Invalid request",
+                    "message": format!("Invalid JSON: {}", e)
+                }))?);
+            }
+        };
         
         // Validate password
-        self.validate_password(&signup_req.password)?;
+        if let Err(e) = self.validate_password(&signup_req.password) {
+            return Ok(AuthResponse::json(400, &serde_json::json!({
+                "error": "Invalid request", 
+                "message": e.to_string()
+            }))?);
+        }
         
         // Check if user already exists
         if let Some(_) = ctx.database.get_user_by_email(&signup_req.email).await? {
@@ -95,7 +121,7 @@ impl EmailPasswordPlugin {
         
         let create_user = CreateUser::new()
             .with_email(&signup_req.email)
-            .with_name(signup_req.name.unwrap_or_default());
+            .with_name(&signup_req.name);
         
         let mut create_user = create_user;
         create_user.metadata = Some(metadata);
@@ -106,36 +132,63 @@ impl EmailPasswordPlugin {
         let session_manager = crate::core::SessionManager::new(ctx.config.clone(), ctx.database.clone());
         let session = session_manager.create_session(&user, None, None).await?;
         
-        let response = AuthSuccessResponse {
+        let response = SignUpResponse {
+            token: Some(session.token),
             user,
-            session_token: session.token,
         };
         
-        Ok(AuthResponse::json(201, &response)?)
+        Ok(AuthResponse::json(200, &response)?)
     }
     
     async fn handle_sign_in(&self, req: &AuthRequest, ctx: &AuthContext) -> AuthResult<AuthResponse> {
-        let signin_req: SignInRequest = req.body_as_json()
-            .map_err(|e| AuthError::InvalidRequest(format!("Invalid JSON: {}", e)))?;
+        let signin_req: SignInRequest = match req.body_as_json() {
+            Ok(req) => req,
+            Err(e) => {
+                return Ok(AuthResponse::json(400, &serde_json::json!({
+                    "error": "Invalid request",
+                    "message": format!("Invalid JSON: {}", e)
+                }))?);
+            }
+        };
         
         // Get user by email
-        let user = ctx.database.get_user_by_email(&signin_req.email).await?
-            .ok_or(AuthError::InvalidCredentials)?;
+        let user = match ctx.database.get_user_by_email(&signin_req.email).await? {
+            Some(user) => user,
+            None => {
+                return Ok(AuthResponse::json(401, &serde_json::json!({
+                    "error": "Invalid credentials",
+                    "message": "Email or password is incorrect"
+                }))?);
+            }
+        };
         
         // Verify password (assuming password is stored in metadata)
-        let stored_hash = user.metadata.get("password_hash")
-            .and_then(|v| v.as_str())
-            .ok_or(AuthError::InvalidCredentials)?;
+        let stored_hash = match user.metadata.get("password_hash").and_then(|v| v.as_str()) {
+            Some(hash) => hash,
+            None => {
+                return Ok(AuthResponse::json(401, &serde_json::json!({
+                    "error": "Invalid credentials",
+                    "message": "Email or password is incorrect"
+                }))?);
+            }
+        };
             
-        self.verify_password(&signin_req.password, stored_hash)?;
+        if let Err(_) = self.verify_password(&signin_req.password, stored_hash) {
+            return Ok(AuthResponse::json(401, &serde_json::json!({
+                "error": "Invalid credentials",
+                "message": "Email or password is incorrect"
+            }))?);
+        }
         
         // Create session
         let session_manager = crate::core::SessionManager::new(ctx.config.clone(), ctx.database.clone());
         let session = session_manager.create_session(&user, None, None).await?;
         
-        let response = AuthSuccessResponse {
+        let response = SignInResponse {
+            redirect: false,
+            token: session.token,
+            url: None,
             user,
-            session_token: session.token,
         };
         
         Ok(AuthResponse::json(200, &response)?)
@@ -194,11 +247,11 @@ impl AuthPlugin for EmailPasswordPlugin {
     
     fn routes(&self) -> Vec<AuthRoute> {
         let mut routes = vec![
-            AuthRoute::post("/sign-in", "sign_in"),
+            AuthRoute::post("/sign-in/email", "sign_in_email"),
         ];
         
         if self.config.enable_signup {
-            routes.push(AuthRoute::post("/sign-up", "sign_up"));
+            routes.push(AuthRoute::post("/sign-up/email", "sign_up_email"));
         }
         
         routes
@@ -206,10 +259,10 @@ impl AuthPlugin for EmailPasswordPlugin {
     
     async fn on_request(&self, req: &AuthRequest, ctx: &AuthContext) -> AuthResult<Option<crate::types::AuthResponse>> {
         match (req.method(), req.path()) {
-            (HttpMethod::Post, "/sign-up") if self.config.enable_signup => {
+            (HttpMethod::Post, "/sign-up/email") if self.config.enable_signup => {
                 Ok(Some(self.handle_sign_up(req, ctx).await?))
             },
-            (HttpMethod::Post, "/sign-in") => {
+            (HttpMethod::Post, "/sign-in/email") => {
                 Ok(Some(self.handle_sign_in(req, ctx).await?))
             },
             _ => Ok(None),
@@ -217,10 +270,13 @@ impl AuthPlugin for EmailPasswordPlugin {
     }
     
     async fn on_user_created(&self, user: &User, ctx: &AuthContext) -> AuthResult<()> {
-        // Could send verification email here if required
-        if self.config.require_email_verification {
-            // TODO: Implement email verification
-            println!("TODO: Send verification email to {}", user.email.as_deref().unwrap_or("unknown"));
+        // Send verification email if required
+        if self.config.require_email_verification && !user.email_verified {
+            if let Some(email) = &user.email {
+                println!("📧 Email verification required for user: {}", email);
+                // The email verification plugin will handle sending the email
+                // via its on_user_created hook
+            }
         }
         
         Ok(())
