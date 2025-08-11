@@ -566,7 +566,7 @@ pub mod sqlx_adapter {
         async fn get_session(&self, token: &str) -> AuthResult<Option<Session>> {
             let session = sqlx::query_as::<_, Session>(
                 r#"
-                SELECT id, user_id, token, expires_at, created_at, ip_address, user_agent, active
+                SELECT id, user_id, token, expires_at, created_at, updated_at, ip_address, user_agent, active, impersonated_by, active_organization_id
                 FROM sessions 
                 WHERE token = $1 AND active = true
                 "#
@@ -576,6 +576,22 @@ pub mod sqlx_adapter {
             .await?;
             
             Ok(session)
+        }
+        
+        async fn get_user_sessions(&self, user_id: &str) -> AuthResult<Vec<Session>> {
+            let sessions = sqlx::query_as::<_, Session>(
+                r#"
+                SELECT id, user_id, token, expires_at, created_at, updated_at, ip_address, user_agent, active, impersonated_by, active_organization_id
+                FROM sessions 
+                WHERE user_id = $1 AND active = true
+                ORDER BY created_at DESC
+                "#
+            )
+            .bind(user_id)
+            .fetch_all(&self.pool)
+            .await?;
+            
+            Ok(sessions)
         }
         
         async fn update_session_expiry(&self, token: &str, expires_at: DateTime<Utc>) -> AuthResult<()> {
@@ -689,6 +705,77 @@ pub mod sqlx_adapter {
                 .await?;
             
             Ok(())
+        }
+        
+        async fn create_verification(&self, create_verification: CreateVerification) -> AuthResult<Verification> {
+            let id = Uuid::new_v4().to_string();
+            let now = Utc::now();
+            
+            let verification = sqlx::query_as::<_, Verification>(
+                r#"
+                INSERT INTO verifications (id, identifier, value, expires_at, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING *
+                "#
+            )
+            .bind(&id)
+            .bind(&create_verification.identifier)
+            .bind(&create_verification.value)
+            .bind(&create_verification.expires_at)
+            .bind(&now)
+            .bind(&now)
+            .fetch_one(&self.pool)
+            .await?;
+            
+            Ok(verification)
+        }
+        
+        async fn get_verification(&self, identifier: &str, value: &str) -> AuthResult<Option<Verification>> {
+            let verification = sqlx::query_as::<_, Verification>(
+                r#"
+                SELECT *
+                FROM verifications 
+                WHERE identifier = $1 AND value = $2 AND expires_at > NOW()
+                "#
+            )
+            .bind(identifier)
+            .bind(value)
+            .fetch_optional(&self.pool)
+            .await?;
+            
+            Ok(verification)
+        }
+        
+        async fn get_verification_by_value(&self, value: &str) -> AuthResult<Option<Verification>> {
+            let verification = sqlx::query_as::<_, Verification>(
+                r#"
+                SELECT *
+                FROM verifications 
+                WHERE value = $1 AND expires_at > NOW()
+                "#
+            )
+            .bind(value)
+            .fetch_optional(&self.pool)
+            .await?;
+            
+            Ok(verification)
+        }
+        
+        async fn delete_verification(&self, id: &str) -> AuthResult<()> {
+            sqlx::query("DELETE FROM verifications WHERE id = $1")
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+            
+            Ok(())
+        }
+        
+        async fn delete_expired_verifications(&self) -> AuthResult<usize> {
+            let result = sqlx::query("DELETE FROM verifications WHERE expires_at < NOW()")
+                .execute(&self.pool)
+                .await?;
+            
+            Ok(result.rows_affected() as usize)
         }
     }
 }

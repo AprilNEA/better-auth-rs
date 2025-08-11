@@ -71,6 +71,58 @@ impl SessionManager {
         Ok(())
     }
     
+    /// Get all active sessions for a user
+    pub async fn list_user_sessions(&self, user_id: &str) -> AuthResult<Vec<Session>> {
+        let sessions = self.database.get_user_sessions(user_id).await?;
+        let now = Utc::now();
+        
+        // Filter out expired sessions
+        let active_sessions: Vec<Session> = sessions
+            .into_iter()
+            .filter(|session| session.expires_at > now && session.active)
+            .collect();
+            
+        Ok(active_sessions)
+    }
+    
+    /// Revoke a specific session by token
+    pub async fn revoke_session(&self, token: &str) -> AuthResult<bool> {
+        // Check if session exists before trying to delete
+        let session_exists = self.get_session(token).await?.is_some();
+        
+        if session_exists {
+            self.delete_session(token).await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    
+    /// Revoke all sessions for a user
+    pub async fn revoke_all_user_sessions(&self, user_id: &str) -> AuthResult<usize> {
+        // Get count of sessions before deletion for return value
+        let sessions = self.list_user_sessions(user_id).await?;
+        let count = sessions.len();
+        
+        self.delete_user_sessions(user_id).await?;
+        Ok(count)
+    }
+    
+    /// Revoke all sessions for a user except the current one
+    pub async fn revoke_other_user_sessions(&self, user_id: &str, current_token: &str) -> AuthResult<usize> {
+        let sessions = self.list_user_sessions(user_id).await?;
+        let mut count = 0;
+        
+        for session in sessions {
+            if session.token != current_token {
+                self.delete_session(&session.token).await?;
+                count += 1;
+            }
+        }
+        
+        Ok(count)
+    }
+    
     /// Cleanup expired sessions
     pub async fn cleanup_expired_sessions(&self) -> AuthResult<usize> {
         let count = self.database.delete_expired_sessions().await?;

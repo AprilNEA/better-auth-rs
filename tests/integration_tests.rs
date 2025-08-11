@@ -1,13 +1,7 @@
-use better_auth::{BetterAuth, AuthConfig, AxumIntegration};
+use better_auth::{BetterAuth, AuthConfig};
 use better_auth::adapters::MemoryDatabaseAdapter;
-use better_auth::plugins::EmailPasswordPlugin;
-use axum::{
-    body::Body,
-    http::{Method, Request, StatusCode},
-};
-use serde_json::{json, Value};
+use better_auth::plugins::{EmailPasswordPlugin, SessionManagementPlugin};
 use std::sync::Arc;
-use tower::ServiceExt;
 
 #[cfg(feature = "sqlx-postgres")]
 use better_auth::adapters::{SqlxAdapter, PoolConfig};
@@ -22,27 +16,257 @@ async fn create_test_auth_memory() -> Arc<BetterAuth> {
         BetterAuth::new(config)
             .database(MemoryDatabaseAdapter::new())
             .plugin(EmailPasswordPlugin::new().enable_signup(true))
+            .plugin(SessionManagementPlugin::new())
             .build()
             .await
             .expect("Failed to create test auth instance")
     )
 }
 
-// TODO: Fix integration tests - temporarily disabled due to Service trait issues
-// /// Helper to call service with proper conversion
-// async fn call_service(auth: Arc<BetterAuth>, request: Request<Body>) -> axum::response::Response {
-//     use tower::Service;
-//     
-//     let app = auth.axum_router();
-//     
-//     // Try to convert to a service that can handle requests
-//     let mut service = app.into_service();
-//     service.ready().await.unwrap();
-//     service.call(request).await.unwrap()
-// }
+/// Helper to create user and get session token
+async fn create_test_user_and_session(auth: Arc<BetterAuth>) -> (String, String) {
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let signup_data = serde_json::json!({
+        "email": "integration@test.com",
+        "password": "password123",
+        "name": "Integration Test User"
+    });
+    
+    let mut headers = HashMap::new();
+    headers.insert("content-type".to_string(), "application/json".to_string());
+    
+    let signup_request = AuthRequest {
+        method: better_auth::types::HttpMethod::Post,
+        path: "/sign-up/email".to_string(),
+        headers,
+        body: Some(signup_data.to_string().into_bytes()),
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(signup_request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    let user_id = response_data["user"]["id"].as_str().unwrap().to_string();
+    let session_token = response_data["token"].as_str().unwrap().to_string();
+    
+    (user_id, session_token)
+}
 
+/// Integration test for get-session endpoint
+#[tokio::test]
+async fn test_get_session_integration() {
+    let auth = create_test_auth_memory().await;
+    let (_user_id, session_token) = create_test_user_and_session(auth.clone()).await;
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("authorization".to_string(), format!("Bearer {}", session_token));
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Get,
+        path: "/get-session".to_string(),
+        headers,
+        body: None,
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    assert!(response_data["session"]["token"].is_string());
+    assert!(response_data["user"]["id"].is_string());
+    assert_eq!(response_data["user"]["email"], "integration@test.com");
+}
 
-// TODO: Re-enable integration tests after fixing Service trait issues
+/// Integration test for sign-out endpoint
+#[tokio::test]
+async fn test_sign_out_integration() {
+    let auth = create_test_auth_memory().await;
+    let (_user_id, session_token) = create_test_user_and_session(auth.clone()).await;
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("authorization".to_string(), format!("Bearer {}", session_token));
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Post,
+        path: "/sign-out".to_string(),
+        headers,
+        body: Some(b"{}".to_vec()),
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    assert_eq!(response_data["success"], true);
+    
+    // Verify session is no longer valid
+    let mut headers2 = HashMap::new();
+    headers2.insert("authorization".to_string(), format!("Bearer {}", session_token));
+    
+    let get_session_request = AuthRequest {
+        method: better_auth::types::HttpMethod::Get,
+        path: "/get-session".to_string(),
+        headers: headers2,
+        body: None,
+        query: HashMap::new(),
+    };
+    
+    let response2 = auth.handle_request(get_session_request).await.unwrap();
+    assert_eq!(response2.status, 401); // Session should be invalidated
+}
+
+/// Integration test for list-sessions endpoint
+#[tokio::test]
+async fn test_list_sessions_integration() {
+    let auth = create_test_auth_memory().await;
+    let (_user_id, session_token) = create_test_user_and_session(auth.clone()).await;
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("authorization".to_string(), format!("Bearer {}", session_token));
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Get,
+        path: "/list-sessions".to_string(),
+        headers,
+        body: None,
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let sessions: Vec<serde_json::Value> = serde_json::from_str(&body_str).unwrap();
+    
+    assert_eq!(sessions.len(), 1);
+    assert!(sessions[0]["token"].is_string());
+}
+
+/// Integration test for revoke-session endpoint
+#[tokio::test]
+async fn test_revoke_session_integration() {
+    let auth = create_test_auth_memory().await;
+    let (user_id, session_token1) = create_test_user_and_session(auth.clone()).await;
+    
+    // Create a second session for the same user
+    use better_auth::core::SessionManager;
+    use better_auth::types::CreateSession;
+    use chrono::{Utc, Duration};
+    
+    use better_auth::adapters::DatabaseAdapter;
+    
+    let session_manager = SessionManager::new(
+        Arc::new(auth.config().clone()), 
+        auth.database().clone()
+    );
+    
+    let create_session = CreateSession {
+        user_id: user_id.clone(),
+        expires_at: Utc::now() + Duration::hours(24),
+        ip_address: Some("192.168.1.1".to_string()),
+        user_agent: Some("test-agent-2".to_string()),
+        impersonated_by: None,
+        active_organization_id: None,
+    };
+    
+    let session2 = auth.database().create_session(create_session).await.unwrap();
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("authorization".to_string(), format!("Bearer {}", session_token1));
+    
+    let revoke_data = serde_json::json!({
+        "token": session2.token
+    });
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Post,
+        path: "/revoke-session".to_string(),
+        headers,
+        body: Some(revoke_data.to_string().into_bytes()),
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    assert_eq!(response_data["status"], true);
+}
+
+/// Integration test for revoke-sessions endpoint
+#[tokio::test]
+async fn test_revoke_sessions_integration() {
+    let auth = create_test_auth_memory().await;
+    let (_user_id, session_token) = create_test_user_and_session(auth.clone()).await;
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("authorization".to_string(), format!("Bearer {}", session_token));
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Post,
+        path: "/revoke-sessions".to_string(),
+        headers,
+        body: Some(b"{}".to_vec()),
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    assert_eq!(response_data["status"], true);
+}
+
+/// Integration test for unauthorized access
+#[tokio::test]
+async fn test_unauthorized_session_access() {
+    let auth = create_test_auth_memory().await;
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    // Try to access get-session without token
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Get,
+        path: "/get-session".to_string(),
+        headers: HashMap::new(),
+        body: None,
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 401);
+}
 /*
 /// Test basic Axum integration with memory database
 #[tokio::test]
