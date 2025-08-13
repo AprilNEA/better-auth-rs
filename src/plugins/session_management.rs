@@ -155,7 +155,28 @@ impl SessionManagementPlugin {
         ctx.database.delete_session(&current_session.token).await?;
         
         let response = SignOutResponse { success: true };
-        Ok(AuthResponse::json(200, &response)?)
+        // Clear session cookie
+        let clear_cookie_header = self.create_clear_session_cookie(ctx);
+        
+        Ok(AuthResponse::json(200, &response)?
+            .with_header("Set-Cookie", clear_cookie_header))
+    }
+    
+    fn create_clear_session_cookie(&self, ctx: &AuthContext) -> String {
+        let session_config = &ctx.config.session;
+        let secure = if session_config.cookie_secure { "; Secure" } else { "" };
+        let http_only = if session_config.cookie_http_only { "; HttpOnly" } else { "" };
+        let same_site = match session_config.cookie_same_site {
+            crate::core::config::SameSite::Strict => "; SameSite=Strict",
+            crate::core::config::SameSite::Lax => "; SameSite=Lax", 
+            crate::core::config::SameSite::None => "; SameSite=None",
+        };
+        
+        format!("{}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT{}{}{}",
+                session_config.cookie_name,
+                secure,
+                http_only,
+                same_site)
     }
     
     async fn handle_list_sessions(&self, req: &AuthRequest, ctx: &AuthContext) -> AuthResult<AuthResponse> {

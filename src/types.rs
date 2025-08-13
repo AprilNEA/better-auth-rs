@@ -272,6 +272,11 @@ impl CreateUser {
         self.role = Some(role.into());
         self
     }
+    
+    pub fn with_metadata(mut self, metadata: HashMap<String, serde_json::Value>) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
 }
 
 impl Default for CreateUser {
@@ -349,6 +354,30 @@ impl AuthResponse {
         self.headers.insert(name.into(), value.into());
         self
     }
+}
+
+// User profile management request/response structures
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserRequest {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub image: Option<String>,
+    pub username: Option<String>,
+    #[serde(rename = "displayUsername")]
+    pub display_username: Option<String>,
+    pub role: Option<String>,
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateUserResponse {
+    pub user: User,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteUserResponse {
+    pub success: bool,
+    pub message: String,
 }
 
 // Manual FromRow implementations for PostgreSQL

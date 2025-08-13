@@ -97,7 +97,7 @@ impl EmailPasswordPlugin {
         };
         
         // Validate password
-        if let Err(e) = self.validate_password(&signup_req.password) {
+        if let Err(e) = self.validate_password(&signup_req.password, ctx) {
             return Ok(AuthResponse::json(400, &serde_json::json!({
                 "error": "Invalid request", 
                 "message": e.to_string()
@@ -133,11 +133,15 @@ impl EmailPasswordPlugin {
         let session = session_manager.create_session(&user, None, None).await?;
         
         let response = SignUpResponse {
-            token: Some(session.token),
+            token: Some(session.token.clone()),
             user,
         };
         
-        Ok(AuthResponse::json(200, &response)?)
+        // Create session cookie
+        let cookie_header = self.create_session_cookie(&session.token, ctx);
+        
+        Ok(AuthResponse::json(200, &response)?
+            .with_header("Set-Cookie", cookie_header))
     }
     
     async fn handle_sign_in(&self, req: &AuthRequest, ctx: &AuthContext) -> AuthResult<AuthResponse> {
@@ -186,19 +190,23 @@ impl EmailPasswordPlugin {
         
         let response = SignInResponse {
             redirect: false,
-            token: session.token,
+            token: session.token.clone(),
             url: None,
             user,
         };
         
-        Ok(AuthResponse::json(200, &response)?)
+        // Create session cookie
+        let cookie_header = self.create_session_cookie(&session.token, ctx);
+        
+        Ok(AuthResponse::json(200, &response)?
+            .with_header("Set-Cookie", cookie_header))
     }
     
-    fn validate_password(&self, password: &str) -> AuthResult<()> {
-        if password.len() < self.config.password_min_length {
+    fn validate_password(&self, password: &str, ctx: &AuthContext) -> AuthResult<()> {
+        if password.len() < ctx.config.password.min_length {
             return Err(AuthError::InvalidRequest(format!(
                 "Password must be at least {} characters long",
-                self.config.password_min_length
+                ctx.config.password.min_length
             )));
         }
         
@@ -215,6 +223,29 @@ impl EmailPasswordPlugin {
             .map_err(|e| AuthError::PasswordHash(format!("Failed to hash password: {}", e)))?;
             
         Ok(password_hash.to_string())
+    }
+    
+    fn create_session_cookie(&self, token: &str, ctx: &AuthContext) -> String {
+        let session_config = &ctx.config.session;
+        let secure = if session_config.cookie_secure { "; Secure" } else { "" };
+        let http_only = if session_config.cookie_http_only { "; HttpOnly" } else { "" };
+        let same_site = match session_config.cookie_same_site {
+            crate::core::config::SameSite::Strict => "; SameSite=Strict",
+            crate::core::config::SameSite::Lax => "; SameSite=Lax", 
+            crate::core::config::SameSite::None => "; SameSite=None",
+        };
+        
+        // Set expiration based on session config
+        let expires = chrono::Utc::now() + session_config.expires_in;
+        let expires_str = expires.format("%a, %d %b %Y %H:%M:%S GMT");
+        
+        format!("{}={}; Path=/; Expires={}{}{}{}",
+                session_config.cookie_name,
+                token,
+                expires_str,
+                secure,
+                http_only,
+                same_site)
     }
     
     fn verify_password(&self, password: &str, hash: &str) -> AuthResult<()> {

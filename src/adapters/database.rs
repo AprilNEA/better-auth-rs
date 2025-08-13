@@ -153,6 +153,34 @@ impl DatabaseAdapter for MemoryDatabaseAdapter {
             user.email_verified = email_verified;
         }
         
+        if let Some(username) = update.username {
+            user.username = Some(username);
+        }
+        
+        if let Some(display_username) = update.display_username {
+            user.display_username = Some(display_username);
+        }
+        
+        if let Some(role) = update.role {
+            user.role = Some(role);
+        }
+        
+        if let Some(banned) = update.banned {
+            user.banned = banned;
+        }
+        
+        if let Some(ban_reason) = update.ban_reason {
+            user.ban_reason = Some(ban_reason);
+        }
+        
+        if let Some(ban_expires) = update.ban_expires {
+            user.ban_expires = Some(ban_expires);
+        }
+        
+        if let Some(two_factor_enabled) = update.two_factor_enabled {
+            user.two_factor_enabled = two_factor_enabled;
+        }
+        
         if let Some(metadata) = update.metadata {
             user.metadata = metadata;
         }

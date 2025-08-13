@@ -32,6 +32,10 @@ impl AxumIntegration for Arc<BetterAuth> {
         // Add default health check route
         router = router.route("/health", get(health_check));
         
+        // Add core user management routes
+        router = router.route("/update-user", post(create_plugin_handler()));
+        router = router.route("/delete-user", axum::routing::delete(create_plugin_handler()));
+        
         // Register plugin routes
         for plugin in self.plugins() {
             for route in plugin.routes() {

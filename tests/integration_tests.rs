@@ -1,6 +1,6 @@
 use better_auth::{BetterAuth, AuthConfig};
 use better_auth::adapters::MemoryDatabaseAdapter;
-use better_auth::plugins::{EmailPasswordPlugin, SessionManagementPlugin};
+use better_auth::plugins::{EmailPasswordPlugin, SessionManagementPlugin, PasswordManagementPlugin};
 use std::sync::Arc;
 
 #[cfg(feature = "sqlx-postgres")]
@@ -17,6 +17,7 @@ async fn create_test_auth_memory() -> Arc<BetterAuth> {
             .database(MemoryDatabaseAdapter::new())
             .plugin(EmailPasswordPlugin::new().enable_signup(true))
             .plugin(SessionManagementPlugin::new())
+            .plugin(PasswordManagementPlugin::new())
             .build()
             .await
             .expect("Failed to create test auth instance")
@@ -261,6 +262,230 @@ async fn test_unauthorized_session_access() {
         path: "/get-session".to_string(),
         headers: HashMap::new(),
         body: None,
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 401);
+}
+
+/// Integration test for forget-password endpoint
+#[tokio::test]
+async fn test_forget_password_integration() {
+    let auth = create_test_auth_memory().await;
+    let (_user_id, _session_token) = create_test_user_and_session(auth.clone()).await;
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("content-type".to_string(), "application/json".to_string());
+    
+    let forget_data = serde_json::json!({
+        "email": "integration@test.com",
+        "redirectTo": "http://localhost:3000/reset"
+    });
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Post,
+        path: "/forget-password".to_string(),
+        headers,
+        body: Some(forget_data.to_string().into_bytes()),
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    assert_eq!(response_data["status"], true);
+}
+
+/// Integration test for reset-password endpoint
+#[tokio::test]
+async fn test_reset_password_integration() {
+    let auth = create_test_auth_memory().await;
+    let (_user_id, _session_token) = create_test_user_and_session(auth.clone()).await;
+    
+    // First, create a verification token manually 
+    use better_auth::adapters::DatabaseAdapter;
+    use better_auth::types::CreateVerification;
+    use chrono::{Utc, Duration};
+    use uuid::Uuid;
+    
+    let reset_token = format!("reset_{}", Uuid::new_v4());
+    let create_verification = CreateVerification {
+        identifier: "integration@test.com".to_string(),
+        value: reset_token.clone(),
+        expires_at: Utc::now() + Duration::hours(24),
+    };
+    auth.database().create_verification(create_verification).await.unwrap();
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("content-type".to_string(), "application/json".to_string());
+    
+    let reset_data = serde_json::json!({
+        "newPassword": "NewPassword123!",
+        "token": reset_token
+    });
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Post,
+        path: "/reset-password".to_string(),
+        headers,
+        body: Some(reset_data.to_string().into_bytes()),
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    assert_eq!(response_data["status"], true);
+}
+
+/// Integration test for change-password endpoint
+#[tokio::test]
+async fn test_change_password_integration() {
+    let auth = create_test_auth_memory().await;
+    let (_user_id, session_token) = create_test_user_and_session(auth.clone()).await;
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("content-type".to_string(), "application/json".to_string());
+    headers.insert("authorization".to_string(), format!("Bearer {}", session_token));
+    
+    let change_data = serde_json::json!({
+        "currentPassword": "password123",
+        "newPassword": "NewPassword123!",
+        "revokeOtherSessions": "false"
+    });
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Post,
+        path: "/change-password".to_string(),
+        headers,
+        body: Some(change_data.to_string().into_bytes()),
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    assert!(response_data["user"]["id"].is_string());
+    assert!(response_data["token"].is_null()); // No new token when not revoking sessions
+}
+
+/// Integration test for change-password with session revocation
+#[tokio::test]
+async fn test_change_password_with_revocation_integration() {
+    let auth = create_test_auth_memory().await;
+    let (_user_id, session_token) = create_test_user_and_session(auth.clone()).await;
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("content-type".to_string(), "application/json".to_string());
+    headers.insert("authorization".to_string(), format!("Bearer {}", session_token));
+    
+    let change_data = serde_json::json!({
+        "currentPassword": "password123",
+        "newPassword": "NewPassword123!",
+        "revokeOtherSessions": "true"
+    });
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Post,
+        path: "/change-password".to_string(),
+        headers,
+        body: Some(change_data.to_string().into_bytes()),
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    assert!(response_data["user"]["id"].is_string());
+    assert!(response_data["token"].is_string()); // New token when revoking sessions
+}
+
+/// Integration test for reset-password token endpoint
+#[tokio::test]
+async fn test_reset_password_token_integration() {
+    let auth = create_test_auth_memory().await;
+    let (_user_id, _session_token) = create_test_user_and_session(auth.clone()).await;
+    
+    // Create a verification token manually
+    use better_auth::adapters::DatabaseAdapter;
+    use better_auth::types::CreateVerification;
+    use chrono::{Utc, Duration};
+    use uuid::Uuid;
+    
+    let reset_token = format!("reset_{}", Uuid::new_v4());
+    let create_verification = CreateVerification {
+        identifier: "integration@test.com".to_string(),
+        value: reset_token.clone(),
+        expires_at: Utc::now() + Duration::hours(24),
+    };
+    auth.database().create_verification(create_verification).await.unwrap();
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Get,
+        path: format!("/reset-password/{}", reset_token),
+        headers: HashMap::new(),
+        body: None,
+        query: HashMap::new(),
+    };
+    
+    let response = auth.handle_request(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    
+    let body_str = String::from_utf8(response.body).unwrap();
+    let response_data: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    
+    assert_eq!(response_data["token"], reset_token);
+}
+
+/// Integration test for unauthorized password operations
+#[tokio::test]
+async fn test_unauthorized_password_operations() {
+    let auth = create_test_auth_memory().await;
+    
+    use better_auth::types::AuthRequest;
+    use std::collections::HashMap;
+    
+    let mut headers = HashMap::new();
+    headers.insert("content-type".to_string(), "application/json".to_string());
+    
+    let change_data = serde_json::json!({
+        "currentPassword": "password123",
+        "newPassword": "NewPassword123!"
+    });
+    
+    let request = AuthRequest {
+        method: better_auth::types::HttpMethod::Post,
+        path: "/change-password".to_string(),
+        headers,
+        body: Some(change_data.to_string().into_bytes()),
         query: HashMap::new(),
     };
     

@@ -1,12 +1,13 @@
 use better_auth::{BetterAuth, AuthConfig};
-use better_auth::plugins::{EmailPasswordPlugin, SessionManagementPlugin};
+use better_auth::plugins::{EmailPasswordPlugin, SessionManagementPlugin, PasswordManagementPlugin};
 use better_auth::adapters::MemoryDatabaseAdapter;
+use better_auth::handlers::AxumIntegration;
 use axum::{
     Router,
     extract::{Request, State},
-    response::{Html, Response},
+    response::Response,
     http::StatusCode,
-    routing::{get, post},
+    routing::get,
     middleware::{self, Next},
     Json,
 };
@@ -72,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .database(database)
             .plugin(EmailPasswordPlugin::new().enable_signup(true))
             .plugin(SessionManagementPlugin::new())
+            .plugin(PasswordManagementPlugin::new())
             .build()
             .await?
     );
@@ -93,6 +95,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("     • GET  /auth/list-sessions - List all user sessions");
     println!("     • POST /auth/revoke-session - Revoke specific session");
     println!("     • POST /auth/revoke-sessions - Revoke all user sessions");
+    println!("   Password Management:");
+    println!("     • POST /auth/forget-password - Request password reset");
+    println!("     • POST /auth/reset-password - Reset password with token");
+    println!("     • GET  /auth/reset-password/{{token}} - Validate reset token");
+    println!("     • POST /auth/change-password - Change password (authenticated)");
+    println!("   User Profile Management:");
+    println!("     • POST /auth/update-user - Update user profile (authenticated)");
+    println!("     • DELETE /auth/delete-user - Delete user account (authenticated)");
     println!("   Other:");
     println!("     • GET  /auth/health - Health check");
     println!("     • GET  /api/profile - Protected API route");
@@ -106,18 +116,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn create_app_router(auth: Arc<BetterAuth>) -> Router {
-    // Create auth router with all authentication endpoints  
-    let auth_router = Router::new()
-        .route("/health", get(health_check))
-        .route("/sign-up", post(auth_handler))
-        .route("/sign-in", post(auth_handler))
-        .with_state(auth.clone());
+    // Create auth router using the BetterAuth AxumIntegration
+    // This automatically registers all plugin routes
+    let auth_router = auth.clone().axum_router();
     
     // Create main application router
     Router::new()
-        // Demo web interface
-        // .route("/", get(serve_demo_page))
-        
         // API routes
         .route("/api/profile", get(get_user_profile))
         .route("/api/protected", get(protected_route))
@@ -177,27 +181,7 @@ fn extract_session_token(req: &Request) -> Option<String> {
     None
 }
 
-// Basic auth handler for sign-up and sign-in
-async fn auth_handler(
-    State(_auth): State<Arc<BetterAuth>>,
-    Json(payload): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    // This is a simplified handler - in the real implementation, 
-    // this would route to the appropriate plugin handler
-    Ok(Json(serde_json::json!({
-        "message": "Auth endpoint - implement with BetterAuth plugin routing",
-        "received": payload
-    })))
-}
 
-// Health check endpoint
-async fn health_check() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "status": "ok",
-        "service": "better-auth-axum-demo",
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    }))
-}
 
 // API route handlers
 async fn get_user_profile(
@@ -250,6 +234,12 @@ async fn public_route() -> Json<ApiResponse<serde_json::Value>> {
             "GET /auth/list-sessions (protected)",
             "POST /auth/revoke-session (protected)",
             "POST /auth/revoke-sessions (protected)",
+            "POST /auth/forget-password",
+            "POST /auth/reset-password",
+            "GET /auth/reset-password/{token}",
+            "POST /auth/change-password (protected)",
+            "POST /auth/update-user (protected)",
+            "DELETE /auth/delete-user (protected)",
             "GET /api/profile (protected)",
             "GET /api/protected (protected)",
             "GET /api/public"
