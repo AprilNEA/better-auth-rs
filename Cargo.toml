@@ -1,10 +1,10 @@
 [package]
 name = "better-auth"
-version = "0.0.1-alpha.1"
+version = "0.0.1-alpha.2"
 edition = "2024"
 license = "MIT"
 description = "The most comprehensive authentication framework for Rust"
-repository = "https://github.com/AprilNEA/better-auth-rs"
+repository = "https://github.com/better-auth-rs/better-auth-rs"
 
 [lib]
 name = "better_auth"
